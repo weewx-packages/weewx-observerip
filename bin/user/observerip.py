@@ -1,4 +1,5 @@
 #!/usr/bin/python
+# Modified 2026-10-22 by weewx-packages.
 # Copyright 2015 David Malick
 """weewx driver for Ambient ObserverIP
 
@@ -8,21 +9,22 @@ For the default configuration see the  ObserverIPConfEditor class or run
 """
 
 
-from __future__ import with_statement
+
 import syslog
 import time
 import io
 import socket
 import sys
-import urllib
-import urllib2
+import urllib.request, urllib.parse, urllib.error
+import urllib.request, urllib.error, urllib.parse
+from html.parser import HTMLParser
 
 import weewx
 import weewx.drivers
 from weeutil.weeutil import to_int, to_float, to_bool
 
 DRIVER_NAME = 'ObserverIP'
-DRIVER_VERSION = "0.1"
+DRIVER_VERSION = "0.2.0"
 
 if weewx.__version__ < "3":
     raise weewx.UnsupportedFeature("weewx 3 is required, found %s" %
@@ -53,13 +55,44 @@ def confeditor_loader():
 def configurator_loader(_):
     return ObserverIPConfigurator()
 
+class StationPage(HTMLParser):
+    def __init__(self, use_values=True):
+        super(StationPage, self).__init__()
+        self.values = {}
+        self.use_values = use_values
+        self.select = None
+        self.selected = False
+
+    def handle_starttag(self, tag, attributes):
+        attrs = dict(attributes)
+        if tag == 'input' and attrs.get('name') not in (
+                None, 'Cancel', 'Apply', 'corr_Default', 'rain_Default', 'reboot', 'restore'):
+            self.values[attrs['name']] = attrs.get('value', '')
+        elif tag == 'select':
+            self.select = attrs.get('name')
+        elif tag == 'option':
+            self.selected = self.select is not None and 'selected' in attrs
+            if self.selected:
+                self.values[self.select] = attrs.get('value', '') if self.use_values else ''
+
+    def handle_data(self, data):
+        if self.selected and not self.use_values:
+            self.values[self.select] += data.strip()
+
+    def handle_endtag(self, tag):
+        if tag in ('option', 'select'):
+            self.selected = False
+        if tag == 'select':
+            self.select = None
+
+
 class OpserverIPHardware():
     """
     Interface to communicate directly with ObserverIP
     """
 
     UDP_PORT = 25122
-    MESSAGE = "ASIXXISA\x00"
+    MESSAGE = b"ASIXXISA\x00"
 
     CALIBRATIONBOUND = {'RainGain': (to_float, 0.1, 5.0),
                         'AbsOffset': (to_float, -23.62, 23.62),
@@ -80,6 +113,7 @@ class OpserverIPHardware():
         self.hostname = stn_dict.get('hostname',None)
         self.max_tries = int(stn_dict.get('max_tries', 5))
         self.retry_wait = int(stn_dict.get('retry_wait', 2))
+        self.timeout = float(stn_dict.get('timeout', 5))
         self.infopacket = None
         #FIXME modify to allow using hostname to traverse routers
         self.infopacket = self.infoprobe()
@@ -95,40 +129,43 @@ class OpserverIPHardware():
                              socket.SOCK_DGRAM) # UDP
         if self.hostname is None:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        for count in range(self.max_tries):
-            try:
-                sock.sendto(self.MESSAGE, (udp_addr, self.UDP_PORT))
-                sock.settimeout(self.retry_wait)
-                recv_data, (addr, port) = sock.recvfrom(1024)
-                return recv_data
-            except socket.timeout:
-                logerr("socket timeout %d of %d" % (count+1, self.max_tries))
-                time.sleep(self.retry_wait)
-            except socket.gaierror:
-                logerr("%s: incorrect hostname or IP" % self.hostname)
-                return None
-        else:
-            logerr("probe failed after %d tries" % self.max_tries)
-        return None
+        try:
+            for count in range(self.max_tries):
+                try:
+                    sock.sendto(self.MESSAGE, (udp_addr, self.UDP_PORT))
+                    sock.settimeout(self.retry_wait)
+                    recv_data, (addr, port) = sock.recvfrom(1024)
+                    return recv_data
+                except socket.timeout:
+                    logerr("socket timeout %d of %d" % (count+1, self.max_tries))
+                    time.sleep(self.retry_wait)
+                except socket.gaierror:
+                    logerr("%s: incorrect hostname or IP" % self.hostname)
+                    return None
+            else:
+                logerr("probe failed after %d tries" % self.max_tries)
+            return None
+        finally:
+            sock.close()
 
     def packetstr(self, ind):
-        es = self.infopacket.find('\x00', ind)
-        return self.infopacket[ind:es]
+        es = self.infopacket.find(b'\x00', ind)
+        return self.infopacket[ind:es].decode("ascii")
 
     def packetip(self, ind):
-        return "%d.%d.%d.%d" % (ord(self.infopacket[ind]),
-                                ord(self.infopacket[ind + 1]),
-                                ord(self.infopacket[ind + 2]),
-                                ord(self.infopacket[ind + 3]))
+        return "%d.%d.%d.%d" % (self.infopacket[ind],
+                                self.infopacket[ind + 1],
+                                self.infopacket[ind + 2],
+                                self.infopacket[ind + 3])
 
     def packetport(self, ind):
-        return ord(self.infopacket[ind]) * 256 + ord(self.infopacket[ind + 1])
+        return self.infopacket[ind] * 256 + self.infopacket[ind + 1]
 
     def getinfopacket(self):
         return self.infopacket
 
     def dhcp(self):
-        flag = ord(self.infopacket[0x20]) & 0x40
+        flag = self.infopacket[0x20] & 0x40
         return False if flag == 0 else True
 
     def ipaddr(self):
@@ -167,103 +204,63 @@ class OpserverIPHardware():
     def version(self):
         return self.packetstr(0x73)
 
-    def page_to_dict(self, url, value=True):
-        dat = dict()
+    def _request(self, url, data=None):
+        if isinstance(data, str):
+            data = data.encode('ascii')
+        return urllib.request.urlopen(url, data, timeout=self.timeout)
 
+    def page_to_dict(self, url, value=True):
         for count in range(self.max_tries):
             try:
-                response = urllib2.urlopen(url)
-                break
-            except urllib2.URLError:
+                with self._request(url) as response:
+                    parser = StationPage(value)
+                    parser.feed(response.read().decode('utf-8', errors='replace'))
+                    return parser.values
+            except (OSError, urllib.error.URLError) as error:
                 logerr('data retrieval failed attempt %d of %d: %s' %
-                       (count + 1, self.max_tries, ''))
+                       (count + 1, self.max_tries, error))
                 time.sleep(self.retry_wait)
-        else:
-            logerr('data retrieval failed after %d tries' % self.max_tries)
-            return dat
-
-        for line in response:
-            try:
-                line.index('<input')
-                es = line.index('name="')
-                ee = line.index('"', es + 6)
-                name = line[es + 6:ee]
-                es = line.index('value="')
-                ee = line.index('"', es + 7)
-                val = line[es + 7:ee]
-                dat[name] = val
-            except ValueError:
-                try:
-                    line.index('<select')
-                    es = line.index('name="')
-                    ee = line.index('"', es + 6)
-                    name = line[es + 6:ee]
-                    while True:
-                        nextline = response.readline()
-                        sl = nextline.find('selected')
-                        if ( sl != -1 ):
-                            if value:
-                                es = nextline.index('value="')
-                                ee = nextline.index('"', es + 7)
-                                val = nextline[es + 7:ee]
-                                dat[name]=val
-                            else:
-                                es = nextline.index('>', sl)
-                                ee = nextline.index('<', es)
-                                val = nextline[es+1:ee]
-                                dat[name]=val
-                            break
-                except ValueError:
-                    pass
-        for i in ('Cancel', 'Apply', 'corr_Default', 'rain_Default', 'reboot', 'restore'):
-            if i in dat:
-                del dat[i]
-        return dat
+        return {}
 
     @staticmethod
-    def dict_to_param(d):
-        param=""
-        for i in d:
-            if param:
-                param += "&"
-            param += "%s=%s" % (i,d[i])
-        return param
+    def dict_to_param(data):
+        return urllib.parse.urlencode(data)
 
     def boundcheck(self, bound, data):
         for i in data:
             if i in bound:
                 if ( bound[i][0](data[i]) < bound[i][0](bound[i][1]) or bound[i][0](data[i]) > bound[i][0](bound[i][2])):
                     logerr("%s bound error: range: %s-%s value: %s" % (i, bound[i][1], bound[i][2], data[i] ))
-                    exit(1)
+                    raise ValueError("Invalid station calibration value")
             else:
                 logerr("%s not bound" % i)
-                exit(1)
+                raise ValueError("Invalid station calibration value")
 
     def getnetworksettings(self, Readable=False):
         return self.page_to_dict('http://%s/bscsetting.htm' % self.ipaddr(), not Readable)
 
     def setnetworksettings(self):
-        response = urllib2.urlopen("http://%s/bscsetting.htm" % self.ipaddr(),
+        response = self._request("http://%s/bscsetting.htm" % self.ipaddr(),
                                    self.dict_to_param(calibdata) + "&Apply=Apply")
     def setnetworkdefault(self):
         #print 'Not implemented'
         pass
     def reboot(self, wait=True):
-        print 'Not implemented'
+        print('Not implemented')
         if wait:
             self.infopacket = None
             self.infopacket = self.infoprobe()
             if self.infopacket:
-                print 'reboot succeded'
+                print('reboot succeded')
             else:
-                print 'cannot find station'
+                print('cannot find station')
 
     def getidpasswd(self):
         return self.page_to_dict('http://%s/weather.htm' % self.ipaddr())
 
     def setidpasswd(self, wuid, passwd):
         """set wunderground id and passwd"""
-        response = urllib2.urlopen("http://%s/weather.htm" % self.ipaddr(),
+        response = self._request("http://%s/weather.htm" % self.ipaddr(),
                                    "stationID=%s&stationPW=%s&Apply=Apply" % (wuid, passwd))
 
     def getstationsettings(self, readable=False):
@@ -272,7 +269,7 @@ class OpserverIPHardware():
     def setstationsettings(self, settings):
         if 'WRFreq' in settings:
             del settings['WRFreq']
-        response = urllib2.urlopen("http://%s/station.htm" % self.ipaddr(),
+        response = self._request("http://%s/station.htm" % self.ipaddr(),
                                    self.dict_to_param(settings) + "&Apply=Apply")
 
     def data(self):
@@ -284,14 +281,14 @@ class OpserverIPHardware():
     def setcalibration(self, calibdata):
         self.boundcheck(self.CALIBRATIONBOUND ,calibdata)
         try:
-            response = urllib2.urlopen("http://%s/correction.htm" % self.ipaddr(),
+            response = self._request("http://%s/correction.htm" % self.ipaddr(),
                                        self.dict_to_param(calibdata) + "&Apply=Apply")
             pass
-        except urllib2.URLError:
+        except urllib.error.URLError:
             pass
 
     def setcalibrationdefault(self):
-        response = urllib2.urlopen('http://%s/msgcoredef.htm' % self.ipaddr())
+        response = self._request('http://%s/msgcoredef.htm' % self.ipaddr())
 
 # =============================================================================
 
@@ -306,7 +303,7 @@ class ObserverIPDriver(weewx.drivers.AbstractDevice):
                       'unit_Solar': 'w/m2'}
 
 # Does not work using function norm
-    XXXdirectmap = {
+    directmap = {
         'wh2600USA_v2.2.0' : {
             'dateTime' : ('epoch', to_int),
             'inTemp' : ('inTemp', to_float),
@@ -320,8 +317,8 @@ class ObserverIPDriver(weewx.drivers.AbstractDevice):
             'radiation' : ('solarrad', to_float),
             'UV' : ('uvi', to_float),
             'rain' : ('rainofyearly', to_float),
-            'inTempBatteryStatus' : ('inBattSta', ),
-            'outTempBatteryStatus' : ('outBattSta1', )
+            'inTempBatteryStatus' : ('inBattSta', lambda value: 0 if value == 'Normal' else 1),
+            'outTempBatteryStatus' : ('outBattSta1', lambda value: 0 if value == 'Normal' else 1)
         },
         'default' : {
             'dateTime' : ('epoch', to_int),
@@ -359,57 +356,7 @@ class ObserverIPDriver(weewx.drivers.AbstractDevice):
     def __init__(self, **stn_dict):
         loginf("version is %s" % DRIVER_VERSION)
 
-        self.directmap = {
-            'wh2600USA_v2.2.0' : {
-                'dateTime' : ('epoch', to_int),
-                'inTemp' : ('inTemp', to_float),
-                'inHumidity' : ('inHumi', to_float),
-                'pressure' : ('AbsPress', to_float),
-                'outTemp' : ('outTemp',to_float),
-                'outHumidity' : ('outHumi', to_float),
-                'windDir' : ('windir', to_float),
-                'windSpeed' : ('avgwind', to_float),
-                'windGust' : ('gustspeed', to_float),
-                'radiation' : ('solarrad', to_float),
-                'UV' : ('uvi', to_float),
-                'rain' : ('rainofyearly', to_float),
-                'inTempBatteryStatus' : ('inBattSta', self.norm),
-                'outTempBatteryStatus' : ('outBattSta1', self.norm)
-            },
-            'default' : {
-                'dateTime' : ('epoch', to_int),
-                'inTemp' : ('inTemp', to_float),
-                'inHumidity' : ('inHumi', to_float),
-                'pressure' : ('AbsPress', to_float),
-                'outTemp' : ('outTemp',to_float),
-                'outHumidity' : ('outHumi', to_float),
-                'windDir' : ('windir', to_float),
-                'windSpeed' : ('avgwind', to_float),
-                'windGust' : ('gustspeed', to_float),
-                'radiation' : ('solarrad', to_float),
-                'UV' : ('uvi', to_float),
-                'rain' : ('rainofyearly', to_float),
-            },
-            'wu' : {
-                'dateTime' : ('epoch', to_int),
-                'outTemp' : ('tempf',to_float),
-                'outHumidity' : ('humidity', to_float),
-                'dewpoint' : ('dewptf', to_float),
-                'windchill' : ('windchillf', to_float),
-                'windDir' : ('winddir', to_float),
-                'windSpeed' : ('windspeedmph', to_float),
-                'windGust' : ('windgustmph', to_float),
-                'rain' : ('yearlyrainin', to_float),
-                'radiation' : ('solarradiation', to_float),
-                'UV' : ('UV', to_float),
-                'inTemp' : ('indoortempf', to_float),
-                'inHumidity' : ('indoorhumidity', to_float),
-                'pressure' : ('baromin', to_float),
-                'txBatteryStatus' : ('lowbatt', to_float),
-            }
-        }
-
-        self.xferfile = stn_dict['xferfile']
+        self.xferfile = stn_dict.get('xferfile')
         self.poll_interval = float(stn_dict.get('poll_interval', 10))
         self.dup_interval = float(stn_dict.get('dup_interval', 5))
         self.max_tries = int(stn_dict.get('max_tries', 5))
@@ -424,9 +371,7 @@ class ObserverIPDriver(weewx.drivers.AbstractDevice):
         if self.mode == 'direct':
             self.obshardware = OpserverIPHardware(**stn_dict)
             if self.chkunits(self.expected_units):
-                logerr("calibration error: %s is expexted to be %f but is %f" % 
-                          (i, to_float(calibdata[i]), to_float(stcalib[i])))
-                raise Exception("Station units not set correctly")
+                raise weewx.WeeWxIOError("Station units not set correctly; see preceding unit mismatch")
             if self.obshardware.version() in self.directmap:
                 self.map = self.directmap[self.obshardware.version()]
             else:
@@ -488,7 +433,7 @@ class ObserverIPDriver(weewx.drivers.AbstractDevice):
                         name = line[:eq_index].strip()
                         data[name] = line[eq_index + 1:].strip()
                 return data
-            except (IOError, ValueError), e:
+            except (IOError, ValueError) as e:
                 logerr('data retrieval failed attempt %d of %d: %s' %
                        (count + 1, self.max_tries, e))
                 time.sleep(self.retry_wait)
@@ -653,7 +598,7 @@ class ObserverIPConfigurator(weewx.drivers.AbstractConfigurator):
             sys.stdout.write("http://%s\n" % obshardware.ipaddr())
             try:
                 hostname = socket.gethostbyaddr(obshardware.ipaddr())[0]
-                print "or"
+                print("or")
                 sys.stdout.write("http://%s\n" % hostname)
             except:
                 pass
@@ -665,18 +610,18 @@ class ObserverIPConfigurator(weewx.drivers.AbstractConfigurator):
 
         if options.defconf:
             stconf = ObserverIPConfEditor()
-            print stconf.default_stanza
+            print(stconf.default_stanza)
 
     def areyousure(self, prompt=True, msg=''):
         if prompt:
-            print msg
+            print(msg)
             ans = ''
             while ans not in ['y', 'n']:
-                ans = raw_input("Are you sure you wish to proceed (y/n)? ")
+                ans = input("Are you sure you wish to proceed (y/n)? ")
                 if ans == 'y':
                     return True
                 elif ans == 'n':
-                    print 'Aborting'
+                    print('Aborting')
                     return False
         else:
             return True
@@ -701,5 +646,5 @@ if __name__ == "__main__":
         mode='indirect'
     station = ObserverIPDriver(mode=mode, xferfile=options.xferfile)
     for p in station.genLoopPackets():
-        print weeutil.weeutil.timestamp_to_string(p['dateTime']), p
+        print(weeutil.weeutil.timestamp_to_string(p['dateTime']), p)
 

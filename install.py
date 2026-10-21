@@ -1,6 +1,7 @@
 # installer for Ambient ObserverIP driver
+# Modified 2026-10-22 by weewx-packages.
 
-from setup import ExtensionInstaller
+from weecfg.extension import ExtensionInstaller
 
 def loader():
     return ObserverIPInstaller()
@@ -8,7 +9,7 @@ def loader():
 class ObserverIPInstaller(ExtensionInstaller):
     def __init__(self):
         super(ObserverIPInstaller, self).__init__(
-                version="0.1",
+                version="0.2.0",
                 name='observerip',
                 description='driver for Ambient ObserverIP',
                 author="David Malick",
