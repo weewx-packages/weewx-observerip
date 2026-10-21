@@ -7,11 +7,11 @@ Download the master branch tarball at https://github.com/dkmcode/weewx-observeri
 ## Independent continuation
 
 This repository retains dkmcode/weewx-observerip history and GPL-3.0-only
-licensing. Version 0.2.0 supports Python 3 and WeeWX 5, byte-oriented UDP
+licensing. Version 0.2.1 supports Python 3 and WeeWX 5, byte-oriented UDP
 probes, bounded HTTP requests and HTML parsing that terminates at EOF.
 
 ```
-weectl extension install https://github.com/weewx-packages/weewx-observerip/archive/refs/tags/v0.2.0.zip
+weectl extension install https://github.com/weewx-packages/weewx-observerip/archive/refs/tags/v0.2.1.zip
 weectl station reconfigure --driver=user.observerip --config=/path/to/weewx.conf
 ```
 
