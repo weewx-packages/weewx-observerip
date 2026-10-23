@@ -13,6 +13,9 @@ is withdrawn from the catalog; do not use its installer layout.
 
 ## Install
 
+An existing WeeWX station is required. Replace `/path/to/weewx.conf`
+with its configuration file before running the commands.
+
 The catalog release requires Python >=3.10 and WeeWX >=5.2,<6.
 
 Use the `weectl` from your WeeWX Python environment:
@@ -22,9 +25,9 @@ weectl extension install https://github.com/weewx-packages/catalog/releases/down
 weectl station reconfigure --driver=user.observerip --config=/path/to/weewx.conf
 ```
 
-Replace `/path/to/weewx.conf` with your station configuration. Stock WeeWX 5
-accepts this fixed URL or a downloaded copy of the same archive. No catalog
-integration is required. Restart WeeWX yourself after configuration changes.
+Stock WeeWX 5 accepts this fixed URL or a downloaded copy of the same archive.
+No catalog integration is required. Restart WeeWX yourself after configuration
+changes.
 
 ## Poll the station directly
 
