@@ -1,5 +1,7 @@
 # installer for Ambient ObserverIP driver
 # Modified 2026-10-22 by weewx-packages.
+# Modified 2026-10-23 by weewx-packages: install the Apache examples below
+# bin/user, write mode = direct and leave check_calibration off.
 
 from weecfg.extension import ExtensionInstaller
 
@@ -17,11 +19,11 @@ class ObserverIPInstaller(ExtensionInstaller):
 #                    'Station': {
 #                        'station_type': 'ObserverIP'},
                     'ObserverIP': {
-                        'direct': 'true',
+                        'mode': 'direct',
                         'poll_interval' : '16',
                         'dup_interval': '2',
                         'xferfile': '/path/to/transfer/file',
-                        'check_calibration': 'true',
+                        'check_calibration': 'false',
                         'set_calibration': 'false',
                         'driver': 'user.observerip',
                         'calibration': {
@@ -41,8 +43,8 @@ class ObserverIPInstaller(ExtensionInstaller):
                     }
                 },
                 files=[('bin/user', ['bin/user/observerip.py']),
-                       ('util/apache/conf.d/weatherstation-intercept.conf',['util/apache/conf.d/weatherstation-intercept.conf']),
-                       ('util/apache/weatherstation/updateweatherstation.php',['util/apache/weatherstation/updateweatherstation.php'])
+                       ('bin/user/observerip_examples/apache/conf.d', ['bin/user/observerip_examples/apache/conf.d/weatherstation-intercept.conf']),
+                       ('bin/user/observerip_examples/apache/weatherstation', ['bin/user/observerip_examples/apache/weatherstation/updateweatherstation.php'])
                        ]
                 )
 

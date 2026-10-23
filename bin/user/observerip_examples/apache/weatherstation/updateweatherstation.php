@@ -1,4 +1,6 @@
 #!/bin/bash
+# Modified 2026-10-23 by weewx-packages: start a new transfer file on every
+# upload, also without seqfile.
 # This script is ment to run on a private network
 # There has been absolutly no thought give to security !!!!
 # Do not expose this to the outside world without looking at it first!!!!!
@@ -25,7 +27,7 @@ seqnum=$[ $seqnum + 1 ]
 [ -n "$seqfile" ] && echo $seqnum > $seqfile
 
 
-[ -n "$seqfile" ] && echo "seqnum=$seqnum" >$xferfile || echo -n >>$xferfile
+[ -n "$seqfile" ] && echo "seqnum=$seqnum" >$xferfile || echo -n >$xferfile
 data="$QUERY_STRING"
 
 while [ -n "$data" ] ; do

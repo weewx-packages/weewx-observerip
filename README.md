@@ -35,9 +35,9 @@ Then select the driver and restart WeeWX:
 weectl station reconfigure --driver=user.observerip --config=/path/to/weewx.conf
 ```
 
-The installer adds a `[[calibration]]` section and sets
-`check_calibration = true`. Compare those values with the calibration page of
-your station before the first start. See [Calibration](#calibration).
+The installer adds a `[[calibration]]` section with default values and sets
+`check_calibration = false`. Compare those values with the calibration page of
+your station before you turn the check on. See [Calibration](#calibration).
 
 ## Configuration
 
@@ -67,11 +67,8 @@ Options in `[ObserverIP]`:
 | `max_tries` | `5` | Attempts for the UDP probe, each HTTP page and each read of `xferfile`. |
 | `retry_wait` | `2` | Seconds between attempts, also the UDP receive timeout. |
 | `timeout` | `5` | HTTP timeout in seconds. |
-| `check_calibration` | `false` | Compare the station calibration with `[[calibration]]` at startup. The installer writes `true`. |
+| `check_calibration` | `false` | Compare the station calibration with `[[calibration]]` at startup. |
 | `set_calibration` | `false` | On a mismatch, write `[[calibration]]` to the station. Only used with `check_calibration = true`. |
-
-The installer also writes `direct = true`. The driver ignores this option; only
-`mode` selects the acquisition method.
 
 The UDP probe runs at every start in direct mode, and in indirect mode when
 `check_calibration` is true. After the probe, the driver sends its HTTP
@@ -117,8 +114,9 @@ the station and checks again. Keys you leave out are not checked.
     check_calibration = false
 ```
 
-The catalog package installs two examples below `bin/user/observerip_examples/apache/`
-in the WeeWX root. The sources are in [util/apache](util/apache):
+The installer copies two examples to `bin/user/observerip_examples/apache/`
+in the WeeWX root. The sources are in
+[bin/user/observerip_examples/apache](bin/user/observerip_examples/apache):
 
 - `conf.d/weatherstation-intercept.conf` maps `/weatherstation/` to the CGI
   directory `/var/www/weatherstation/`.
@@ -139,8 +137,8 @@ The installer does not configure the web server. To use the examples:
    script ends with a sample `iptables` destination NAT rule.
 
 The script forwards the upload to Weather Underground only if `id` and
-`passwd` are set in it. It truncates the transfer file on each upload only if
-`seqfile` is set. Otherwise every upload is appended to the file.
+`passwd` are set in it. It rewrites the transfer file on each upload, so the
+file holds only the latest upload.
 
 The [interceptor](https://github.com/weewx-packages/catalog/blob/main/packages/interceptor.md)
 driver can also receive ObserverIP uploads, without a CGI script.
@@ -164,7 +162,8 @@ the UDP probe first.
 - Tested with a local HTTP server, a UDP responder and transfer-file fixtures,
   not with an ObserverIP. Discovery, calibration writes and firmware behaviour
   are not verified on a device.
-- The Apache examples are not tested.
+- The Apache configuration example is not tested. The CGI script is tested
+  from the command line, not under a web server.
 - The driver writes its log messages to syslog with the prefix `observerip:`,
   not through the WeeWX logging configuration.
 
