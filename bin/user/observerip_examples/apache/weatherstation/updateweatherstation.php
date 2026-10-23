@@ -1,6 +1,8 @@
 #!/bin/bash
 # Modified 2026-10-23 by weewx-packages: start a new transfer file on every
 # upload, also without seqfile.
+# Modified 2026-10-23 by weewx-packages: quote lastfile and seqfile, so that an
+# empty lastfile no longer makes cat read the request body from stdin.
 # This script is ment to run on a private network
 # There has been absolutly no thought give to security !!!!
 # Do not expose this to the outside world without looking at it first!!!!!
@@ -21,8 +23,8 @@ echo ""
 
 echo success
 
-[ -f $lastfile ] && lastpacket=$(cat $lastfile) || lastpacket=0
-[ -f "$seqfile" ] && seqnum=$(cat $seqfile) || seqnum=0
+[ -f "$lastfile" ] && lastpacket=$(cat "$lastfile") || lastpacket=0
+[ -f "$seqfile" ] && seqnum=$(cat "$seqfile") || seqnum=0
 seqnum=$[ $seqnum + 1 ]
 [ -n "$seqfile" ] && echo $seqnum > $seqfile
 

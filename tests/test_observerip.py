@@ -176,3 +176,23 @@ def test_config_editor_stanza_does_not_check_calibration():
     import configobj
     stanza = configobj.ConfigObj(m.ObserverIPConfEditor().default_stanza.splitlines())
     assert stanza['ObserverIP']['check_calibration'] == 'false'
+
+
+@pytest.mark.skipif(shutil.which('bc') is None, reason='the CGI example needs bc')
+def test_cgi_example_without_lastfile_does_not_read_stdin(tmp_path):
+    # Under a web server stdin is the request body. An open pipe stands for a
+    # body that has not ended: reading it would block until the timeout.
+    source = Path(__file__).parents[1] / 'bin/user/observerip_examples/apache/weatherstation/updateweatherstation.php'
+    xferfile = tmp_path / 'weather.txt'
+    script = tmp_path / 'cgi.sh'
+    script.write_text(re.sub('(?m)^xferfile=.*$', 'xferfile=%s' % xferfile, source.read_text()))
+    environment = dict(os.environ, QUERY_STRING='tempf=50&dateutc=2026-10-23%2010:00:00',
+                       REMOTE_ADDR='127.0.0.1')
+    body, writer = os.pipe()
+    try:
+        subprocess.run(['bash', str(script)], env=environment, stdin=body,
+                       stdout=subprocess.DEVNULL, check=True, timeout=2)
+    finally:
+        os.close(body)
+        os.close(writer)
+    assert 'tempf=50' in xferfile.read_text().splitlines()
