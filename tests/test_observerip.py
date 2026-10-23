@@ -170,3 +170,9 @@ def test_cgi_example_rewrites_transfer_file_without_seqfile(tmp_path):
     assert len(lines) == len(set(lines))
     driver = m.ObserverIPDriver(mode='indirect', xferfile=str(xferfile))
     assert driver.parse_page(driver.get_data())['outTemp'] == 50
+
+
+def test_config_editor_stanza_does_not_check_calibration():
+    import configobj
+    stanza = configobj.ConfigObj(m.ObserverIPConfEditor().default_stanza.splitlines())
+    assert stanza['ObserverIP']['check_calibration'] == 'false'

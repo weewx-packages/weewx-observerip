@@ -1,7 +1,8 @@
 #!/usr/bin/python
 # Modified 2026-10-22 by weewx-packages.
 # Modified 2026-10-23 by weewx-packages: setnetworksettings() posts its
-# settings argument; docstring names weectl device.
+# settings argument; docstring names weectl device; the configuration editor
+# leaves check_calibration off, as the installer does.
 # Copyright 2015 David Malick
 """weewx driver for Ambient ObserverIP
 
@@ -539,7 +540,7 @@ class ObserverIPConfEditor(weewx.drivers.AbstractConfEditor):
     # retry_wait - time to wait after failed network attempt
 
     # check_calibration - make sure the station calibration is as expected
-    check_calibration = true
+    check_calibration = false
 
     # set_calibration - set calibration in station if it is not as expected
     #                   only meaningful if check_calibration is true
