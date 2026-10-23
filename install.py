@@ -11,7 +11,7 @@ def loader():
 class ObserverIPInstaller(ExtensionInstaller):
     def __init__(self):
         super(ObserverIPInstaller, self).__init__(
-                version="0.2.1",
+                version="0.2.2",
                 name='observerip',
                 description='driver for Ambient ObserverIP',
                 author="David Malick",
