@@ -1,89 +1,180 @@
-# Ambient ObserverIP for WeeWX
+# ObserverIP
 
-Read an Ambient ObserverIP weather station by polling its local HTTP pages, or
-consume a transfer file produced by an intercepted Weather Underground upload.
-Direct acquisition uses a UDP discovery probe as well as HTTP. This is local
-station access, not an Ambient Weather cloud API client.
+A WeeWX driver for the Ambient ObserverIP. In direct mode it finds the station
+with a UDP probe and polls its local web pages. In indirect mode it reads a
+transfer file that a CGI script writes from intercepted Weather Underground
+uploads. It does not use the Ambient Weather cloud.
 
-This independent continuation preserves
-[dkmcode/weewx-observerip](https://github.com/dkmcode/weewx-observerip) history.
-Use catalog archive **0.2.1.post20261022**. It contains the 0.2.1 runtime and
-installs Apache examples inside the managed user tree. The older 0.2.1 archive
-is withdrawn from the catalog; do not use its installer layout.
+This is an independent continuation of
+[dkmcode/weewx-observerip](https://github.com/dkmcode/weewx-observerip). See
+[NOTICE](NOTICE).
 
-## Install
+## Requirements
 
-An existing WeeWX station is required. Replace `/path/to/weewx.conf`
-with its configuration file before running the commands.
+- An Ambient ObserverIP whose units are set to `mph`, `in`, `inhg`, `degF`
+  and `w/m2`. The driver does not convert units. In direct mode, and in
+  indirect mode with `check_calibration = true`, it reads the unit settings
+  from the station and stops on a mismatch.
+- Direct mode: the station and the WeeWX host on the same network segment, so
+  that UDP port 25122 reaches the station.
+- Indirect mode: a web server that runs the CGI example and receives the
+  station's uploads. The example script needs Bash and `bc`, and `curl` if it
+  forwards uploads to Weather Underground.
 
-The catalog release requires Python >=3.10 and WeeWX >=5.2,<6.
+The driver needs no Python packages beyond WeeWX.
 
-Use the `weectl` from your WeeWX Python environment:
+## Installation
+
+Install `observerip` from the [WeeWX packages catalog](https://github.com/weewx-packages/catalog/blob/main/packages/observerip.md).
+The catalog page lists the current release, its WeeWX and Python
+requirements, and the install, update and removal commands.
+
+Then select the driver and restart WeeWX:
 
 ```sh
-weectl extension install https://github.com/weewx-packages/catalog/releases/download/observerip/v0.2.1.post20261022/observerip-0.2.1.post20261022.tar.gz --config=/path/to/weewx.conf
 weectl station reconfigure --driver=user.observerip --config=/path/to/weewx.conf
 ```
 
-Stock WeeWX 5 accepts this fixed URL or a downloaded copy of the same archive.
-No catalog integration is required. Restart WeeWX yourself after configuration
-changes.
+The installer adds a `[[calibration]]` section and sets
+`check_calibration = true`. Compare those values with the calibration page of
+your station before the first start. See [Calibration](#calibration).
 
-## Poll the station directly
+## Configuration
 
-The runtime needs WeeWX and the Python standard library. Put the ObserverIP and
-WeeWX host on the same LAN segment so the UDP discovery exchange can reach them.
-An explicit `hostname` directs the probe to that device; it does not remove the
-UDP requirement.
+Direct mode:
 
 ```ini
 [Station]
     station_type = ObserverIP
+
 [ObserverIP]
     driver = user.observerip
     mode = direct
-    hostname = 192.0.2.10
     poll_interval = 16
     dup_interval = 2
     check_calibration = false
-    set_calibration = false
 ```
 
-Replace the address. `mode` selects acquisition; the legacy `direct` setting
-alone does not switch to transfer-file mode. The driver expects the station's
-displayed temperature in degrees Fahrenheit and its other values in the units
-listed in `expected_units` in [observerip.py](bin/user/observerip.py).
-A mismatch stops acquisition instead of treating Celsius as Fahrenheit.
+Options in `[ObserverIP]`:
 
-The installer supplies calibration defaults and enables `check_calibration`.
-Review them before enabling checks. `set_calibration = true` permits writes to
-the device; leave it false unless you intend to apply those offsets. Rain uses
-cumulative totals to calculate increments.
+| Option | Default | Meaning |
+|---|---|---|
+| `mode` | `direct` | `direct` polls the station, any other value reads `xferfile`. |
+| `hostname` | none | Address for the UDP probe. Without it the probe is a broadcast to 255.255.255.255. |
+| `poll_interval` | `10` | Direct: seconds between packets. Indirect: seconds after the timestamp of the last packet before the file is read again. The installer writes `16`. |
+| `dup_interval` | `5` | Seconds to wait after an empty, incomplete or duplicate packet. The installer writes `2`. |
+| `xferfile` | none | Indirect mode: path of the transfer file. |
+| `max_tries` | `5` | Attempts for the UDP probe, each HTTP page and each read of `xferfile`. |
+| `retry_wait` | `2` | Seconds between attempts, also the UDP receive timeout. |
+| `timeout` | `5` | HTTP timeout in seconds. |
+| `check_calibration` | `false` | Compare the station calibration with `[[calibration]]` at startup. The installer writes `true`. |
+| `set_calibration` | `false` | On a mismatch, write `[[calibration]]` to the station. Only used with `check_calibration = true`. |
 
-## Read intercepted uploads
+The installer also writes `direct = true`. The driver ignores this option; only
+`mode` selects the acquisition method.
 
-Use `mode = indirect`, `poll_interval = 17`, `check_calibration = false` and
-`xferfile = /path/to/transfer/file` under `[ObserverIP]`. Arrange for the file to
-be writable by the web server and readable by WeeWX. The included Apache/CGI
-examples need manual deployment and adaptation:
+The UDP probe runs at every start in direct mode, and in indirect mode when
+`check_calibration` is true. After the probe, the driver sends its HTTP
+requests to the IP address the station reports in its reply, not to
+`hostname`.
 
-* Installed configuration: `bin/user/observerip_examples/apache/conf.d/weatherstation-intercept.conf`.
-* Installed handler: `bin/user/observerip_examples/apache/weatherstation/updateweatherstation.php`.
+Every packet must contain all fields the driver maps, or it is dropped. Packets
+with a timestamp not newer than the previous one are dropped as well. `rain`
+is the increase of the yearly rain total, so the first packet after a start
+has no `rain`.
 
-These paths are relative to your station root. The source examples remain under
-[util/apache](util/apache). Despite its `.php` suffix, the handler is a Bash CGI
-script and needs Bash and `bc`, plus `curl` only for its optional forwarding.
-Configure Apache CGI handling, request redirection, file paths and permissions
-yourself. Set the ObserverIP Relative Pressure Offset to zero for that example.
-The installer neither configures Apache nor enables interception or forwarding.
+### Calibration
 
-Restart WeeWX after changing configuration and inspect its logs. Discovery,
-firmware configuration writes and actual device/Apache behavior were not tested
-in this documentation refresh. Device configurator options include
-`--findobserver`, `--getdata` and `--defaultconfig`; inspect them with
-`weectl device --help --config=/path/to/weewx.conf` after selecting this driver.
+With `check_calibration = true`, the driver compares each key in
+`[[calibration]]` with the station's calibration page. A mismatch stops the
+driver, unless `set_calibration = true`. Then the driver writes the values to
+the station and checks again. Keys you leave out are not checked.
 
-Copyrights and origin are preserved in [LICENSE](LICENSE), [NOTICE](NOTICE) and
-the source headers. Distributed under GPL-3.0-only.
+| Key | Installer value | Range accepted by `set_calibration` |
+|---|---|---|
+| `RainGain` | `1.0` | 0.1 to 5.0 |
+| `windDirOffset` | `0` | -180 to 180 |
+| `inHumiOffset` | `0` | -10 to 10 |
+| `outHumiOffset` | `0` | -10 to 10 |
+| `inTempOffset` | `0.0` | -18 to 18 |
+| `outTempOffset` | `0.0` | -18 to 18 |
+| `AbsOffset` | `0.00` | -23.62 to 23.62 |
+| `RelOffset` | not set | -23.62 to 23.62 |
+| `UVGain` | `1.00` | 0.1 to 5.0 |
+| `SolarGain` | `1.00` | 0.1 to 5.0 |
+| `WindGain` | `1.00` | 0.1 to 5.0 |
+| `luxwm2` | `126.7` | 1 to 1000 |
 
-<!-- Documentation updated 2026-10-23 by weewx-packages. -->
+### Reading intercepted uploads
+
+```ini
+[ObserverIP]
+    driver = user.observerip
+    mode = indirect
+    poll_interval = 17
+    dup_interval = 2
+    xferfile = /path/to/transfer/file
+    check_calibration = false
+```
+
+The catalog package installs two examples below `bin/user/observerip_examples/apache/`
+in the WeeWX root. The sources are in [util/apache](util/apache):
+
+- `conf.d/weatherstation-intercept.conf` maps `/weatherstation/` to the CGI
+  directory `/var/www/weatherstation/`.
+- `weatherstation/updateweatherstation.php` is a Bash CGI script despite its
+  suffix. It writes each upload as `name=value` lines to the file in its
+  `xferfile` variable.
+
+The installer does not configure the web server. To use the examples:
+
+1. Copy the `.conf` file to the Apache configuration directory and check its
+   paths.
+2. Copy the script to `/var/www/weatherstation/` and make it executable.
+3. Set `xferfile` in the script and in `weewx.conf` to the same file. The web
+   server must be able to write it, WeeWX must be able to read it.
+4. Set the Relative Pressure Offset on the station's calibration page to 0.
+   The driver stores the uploaded `baromin` as `pressure`.
+5. Redirect the station's Weather Underground uploads to this server. The
+   script ends with a sample `iptables` destination NAT rule.
+
+The script forwards the upload to Weather Underground only if `id` and
+`passwd` are set in it. It truncates the transfer file on each upload only if
+`seqfile` is set. Otherwise every upload is appended to the file.
+
+The [interceptor](https://github.com/weewx-packages/catalog/blob/main/packages/interceptor.md)
+driver can also receive ObserverIP uploads, without a CGI script.
+
+### Device commands
+
+After selecting the driver, `weectl device` offers these options:
+
+```sh
+weectl device --config=/path/to/weewx.conf --findobserver
+weectl device --config=/path/to/weewx.conf --getdata
+weectl device --config=/path/to/weewx.conf --defaultconfig
+```
+
+`--findobserver` prints the station URL, `--getdata` prints its live data,
+`--defaultconfig` prints the default `[ObserverIP]` section. Each command runs
+the UDP probe first.
+
+## Limitations
+
+- Tested with a local HTTP server, a UDP responder and transfer-file fixtures,
+  not with an ObserverIP. Discovery, calibration writes and firmware behaviour
+  are not verified on a device.
+- The Apache examples are not tested.
+- The driver writes its log messages to syslog with the prefix `observerip:`,
+  not through the WeeWX logging configuration.
+
+## Development
+
+```sh
+python -m pytest -q tests
+```
+
+## License
+
+Copyright 2015 David Malick. Distributed under GPL-3.0-only. See
+[LICENSE](LICENSE), [NOTICE](NOTICE) and the source headers.
