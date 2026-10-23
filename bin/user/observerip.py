@@ -3,6 +3,7 @@
 # Modified 2026-10-23 by weewx-packages: setnetworksettings() posts its
 # settings argument; docstring names weectl device; the configuration editor
 # leaves check_calibration off, as the installer does.
+# Modified 2026-10-23 by weewx-packages: drop the unused direct option.
 # Copyright 2015 David Malick
 """weewx driver for Ambient ObserverIP
 
@@ -364,7 +365,6 @@ class ObserverIPDriver(weewx.drivers.AbstractDevice):
         self.dup_interval = float(stn_dict.get('dup_interval', 5))
         self.max_tries = int(stn_dict.get('max_tries', 5))
         self.retry_wait = int(stn_dict.get('retry_wait', 2))
-        self.directtx = to_bool(stn_dict.get('direct', False))
         self.mode = stn_dict.get('mode', 'direct')
         self.check_calibration = to_bool(stn_dict.get('check_calibration',False))
         self.set_calibration = to_bool(stn_dict.get('set_calibration', False))
